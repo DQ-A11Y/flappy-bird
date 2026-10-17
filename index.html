@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>小鸟穿越障碍物</title>
+<style>
+    html, body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #70c5ce;
+        font-family: "Microsoft YaHei", "微软雅黑", sans-serif;
+    }
+    canvas { display: block; touch-action: none; }
+    body { overscroll-behavior: none; -webkit-user-select: none; user-select: none; }
+    #hint { width: 90%; text-align: center; bottom: calc(52px + env(safe-area-inset-bottom)); }
+    #panel { box-sizing: border-box; max-width: 90vw; }
+    #score { top: calc(12px + env(safe-area-inset-top)); }
+    #score {
+        position: fixed;
+        top: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 30px;
+        font-weight: bold;
+        color: #fff;
+        text-shadow: 0 2px 4px rgba(0,0,0,.4);
+        z-index: 10;
+        pointer-events: none;
+    }
+    #hint {
+        position: fixed;
+        bottom: 52px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 14px;
+        color: rgba(255,255,255,.9);
+        text-shadow: 0 1px 3px rgba(0,0,0,.4);
+        z-index: 10;
+        pointer-events: none;
+    }
+    #overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,.6);
+        z-index: 99;
+        align-items: center;
+        justify-content: center;
+    }
+    #panel {
+        background: #fff;
+        border-radius: 14px;
+        padding: 34px 44px;
+        text-align: center;
+        box-shadow: 0 8px 30px rgba(0,0,0,.4);
+    }
+    #panel .l1 { font-size: 30px; font-weight: bold; margin-bottom: 14px; }
+    #panel .l2 { font-size: 22px; color: #d63384; font-family: Consolas, monospace; }
+    #again {
+        margin-top: 20px;
+        padding: 10px 28px;
+        font-size: 16px;
+        border: none;
+        border-radius: 8px;
+        background: #2f9e44;
+        color: #fff;
+        cursor: pointer;
+    }
+</style>
+</head>
+<body>
+<canvas id="c" aria-label="点击让小鸟向上飞"></canvas>
+<noscript>此游戏需要运行 JavaScript，请通过微信中的网页链接打开。</noscript>
+<div id="score">0 / 200</div>
+<div id="hint">点击屏幕 / 按空格 = 向上飞，碰到柱子或落地都会死</div>
+<div id="overlay">
+    <div id="panel">
+        <div class="l1">游戏结束</div>
+        <div class="l2">flag{123456789}</div>
+        <button id="again">重新开始</button>
+    </div>
+</div>
+<script>
+    var cv = document.getElementById('c');
+    var ctx = cv.getContext('2d');
+    var W, H;
+    var started = false, paused = false;
+    function resize() {
+        var oldW = W, oldH = H;
+        W = Math.max(1, innerWidth); H = Math.max(1, innerHeight);
+        var dpr = Math.min(devicePixelRatio || 1, 2);
+        cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+        cv.style.width = W + 'px'; cv.style.height = H + 'px';
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        if (bird && oldW && oldH) {
+            bird.x = Math.max(50, W * 0.25);
+            bird.y *= H / oldH;
+            pipes.forEach(function(p) { p.x *= W / oldW; p.gapY *= H / oldH; p.gapH *= H / oldH; });
+            if (started && !over) pauseGame();
+        }
+    }
+    addEventListener('resize', resize);
+    resize();
+
+    var TARGET = 200;
+    var GRAVITY = 0.22;
+    var FLAP = -7.5;
+    var MAX_FALL = 4.2;
+
+    var bird, pipes, clouds, score, over, frame, lastSpawn;
+
+    function groundY() { return H - 40; }
+
+    function initClouds() {
+        clouds = [];
+        for (var i = 0; i < 6; i++) {
+            clouds.push({
+                x: Math.random() * W,
+                y: 30 + Math.random() * H * 0.35,
+                s: 16 + Math.random() * 22,
+                v: 0.15 + Math.random() * 0.2
+            });
+        }
+    }
+
+    function reset() {
+        bird = { x: Math.max(80, W * 0.25), y: H * 0.4, vy: 0, r: 16 };
+        pipes = [];
+        initClouds();
+        score = 0;
+        over = false;
+        started = false; paused = false;
+        document.getElementById('hint').textContent = '轻触屏幕开始 · 连续点击向上飞';
+        frame = 0;
+        lastSpawn = -60;
+        document.getElementById('overlay').style.display = 'none';
+        updateScore();
+    }
+
+    function updateScore() {
+        document.getElementById('score').textContent = score + ' / ' + TARGET;
+    }
+
+    function flap() {
+        if (over) return;
+        started = true; paused = false;
+        document.getElementById('hint').textContent = '点击向上飞 · 避开柱子和地面';
+        bird.vy = FLAP;
+    }
+
+    function tap(e) { if (e.cancelable) e.preventDefault(); flap(); }
+    if (window.PointerEvent) cv.addEventListener('pointerdown', tap);
+    else {
+        cv.addEventListener('touchstart', tap, { passive: false });
+        cv.addEventListener('mousedown', function(e) { if (!('ontouchstart' in window)) tap(e); });
+    }
+    function pauseGame() {
+        if (started && !over) {
+            paused = true;
+            document.getElementById('hint').textContent = '已暂停 · 点击屏幕继续';
+        }
+        lastTime = null; accumulator = 0;
+    }
+    document.addEventListener('visibilitychange', function() { if (document.hidden) pauseGame(); });
+    addEventListener('blur', pauseGame);
+    addEventListener('keydown', function (e) {
+        if (e.code === 'Space') { e.preventDefault(); flap(); }
+    });
+
+    function spawnPipe() {
+        var w = Math.max(50, Math.min(80, W * 0.09));
+        var margin = Math.min(60, H * 0.12);
+        var gapH = Math.min(Math.max(140, H * 0.26), groundY() - margin * 2);
+        var minY = margin;
+        var maxY = Math.max(minY, groundY() - margin - gapH);
+        var gapY = minY + Math.random() * (maxY - minY);
+        pipes.push({ x: W + 10, w: w, gapY: gapY, gapH: gapH, scored: false });
+    }
+
+    function endGame(win) {
+        over = true;
+        document.querySelector('#panel .l1').textContent = win ? '挑战成功' : '游戏结束';
+        document.querySelector('#panel .l2').textContent = win ? 'flag{123456789}' : ('得分：' + score);
+        document.getElementById('overlay').style.display = 'flex';
+    }
+
+    document.getElementById('again').addEventListener('click', reset);
+
+    function update() {
+        if (over || !started || paused) return;
+        frame++;
+
+        bird.vy += GRAVITY;
+        if (bird.vy > MAX_FALL) bird.vy = MAX_FALL;
+        bird.y += bird.vy;
+        // 无天花板：bird.y 可无限为负（飞出屏幕上方）
+        // 落地即死
+        if (bird.y > groundY() - bird.r) {
+            bird.y = groundY() - bird.r;
+            endGame(false);
+            return;
+        }
+
+        if (frame - lastSpawn >= 100) { spawnPipe(); lastSpawn = frame; }
+
+        var speed = Math.max(1.6, W * 0.0022);
+        for (var i = 0; i < pipes.length; i++) {
+            var p = pipes[i];
+            p.x -= speed;
+            // 触碰柱子即死；但小鸟完全飞出屏幕上方时不判定（上方越过安全）
+            if (bird.y + bird.r > 0 && bird.x + bird.r > p.x && bird.x - bird.r < p.x + p.w) {
+                if (bird.y - bird.r < p.gapY || bird.y + bird.r > p.gapY + p.gapH) {
+                    endGame(false);
+                    return;
+                }
+            }
+            if (!p.scored && p.x + p.w < bird.x - bird.r) {
+                p.scored = true;
+                score++;
+                updateScore();
+                if (score >= TARGET) { endGame(true); return; }
+            }
+        }
+        pipes = pipes.filter(function (p) { return p.x + p.w > -20; });
+
+        for (var c = 0; c < clouds.length; c++) {
+            clouds[c].x -= clouds[c].v;
+            if (clouds[c].x < -clouds[c].s * 3) clouds[c].x = W + clouds[c].s * 3;
+        }
+    }
+
+    function drawBird() {
+        if (bird.y < -bird.r) {
+            // 飞出屏幕上方：在顶部画指示箭头
+            ctx.fillStyle = 'rgba(255,80,80,.95)';
+            ctx.beginPath();
+            ctx.moveTo(bird.x, 24);
+            ctx.lineTo(bird.x - 10, 6);
+            ctx.lineTo(bird.x + 10, 6);
+            ctx.closePath();
+            ctx.fill();
+            return;
+        }
+        ctx.save();
+        ctx.translate(bird.x, bird.y);
+        ctx.rotate(Math.max(-0.4, Math.min(0.5, bird.vy * 0.05)));
+
+        // 尾巴
+        ctx.fillStyle = '#f0a832';
+        ctx.beginPath();
+        ctx.moveTo(-bird.r + 2, 0);
+        ctx.lineTo(-bird.r - 9, -5);
+        ctx.lineTo(-bird.r - 9, 5);
+        ctx.closePath();
+        ctx.fill();
+
+        // 身体（径向渐变）
+        var bg = ctx.createRadialGradient(-4, -6, 3, 0, 0, bird.r + 2);
+        bg.addColorStop(0, '#ffe98a');
+        bg.addColorStop(1, '#ffc93c');
+        ctx.fillStyle = bg;
+        ctx.beginPath();
+        ctx.arc(0, 0, bird.r, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 翅膀（上升时上扬，下落时下垂）
+        ctx.fillStyle = '#f0a832';
+        ctx.save();
+        ctx.translate(-3, 1);
+        ctx.rotate(bird.vy < 0 ? -0.7 : 0.35);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 10, 6, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // 眼睛
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(6, -5, 5.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#333';
+        ctx.beginPath();
+        ctx.arc(8, -5, 2.8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(8.8, -5.8, 1, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 腮红
+        ctx.fillStyle = 'rgba(255,120,120,.55)';
+        ctx.beginPath();
+        ctx.arc(4, 4, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 嘴
+        ctx.fillStyle = '#ff8c00';
+        ctx.beginPath();
+        ctx.moveTo(bird.r - 3, -2);
+        ctx.lineTo(bird.r + 9, 1);
+        ctx.lineTo(bird.r - 3, 5);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.restore();
+    }
+
+    function drawCloud(cx, cy, s) {
+        ctx.fillStyle = 'rgba(255,255,255,.88)';
+        ctx.beginPath();
+        ctx.arc(cx, cy, s, 0, Math.PI * 2);
+        ctx.arc(cx + s * 0.9, cy + s * 0.2, s * 0.75, 0, Math.PI * 2);
+        ctx.arc(cx - s * 0.9, cy + s * 0.25, s * 0.7, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    function drawPipe(p) {
+        var pg = ctx.createLinearGradient(p.x, 0, p.x + p.w, 0);
+        pg.addColorStop(0, '#1e7a32');
+        pg.addColorStop(0.5, '#46c25f');
+        pg.addColorStop(1, '#1e7a32');
+        ctx.fillStyle = pg;
+
+        // 上半段 + 帽檐
+        ctx.fillRect(p.x, 0, p.w, p.gapY);
+        ctx.fillRect(p.x - 4, p.gapY - 20, p.w + 8, 20);
+        // 下半段 + 帽檐
+        var botTop = p.gapY + p.gapH;
+        ctx.fillRect(p.x, botTop, p.w, groundY() - botTop);
+        ctx.fillRect(p.x - 4, botTop, p.w + 8, 20);
+
+        // 高光条
+        ctx.fillStyle = 'rgba(255,255,255,.18)';
+        ctx.fillRect(p.x + p.w * 0.18, 0, p.w * 0.14, p.gapY - 20);
+        ctx.fillRect(p.x + p.w * 0.18, botTop + 20, p.w * 0.14, groundY() - botTop - 20);
+
+        // 描边
+        ctx.strokeStyle = 'rgba(0,60,20,.45)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(p.x, -2, p.w, p.gapY - 18);
+        ctx.strokeRect(p.x - 4, p.gapY - 20, p.w + 8, 20);
+        ctx.strokeRect(p.x, botTop + 20, p.w, groundY() - botTop - 18);
+        ctx.strokeRect(p.x - 4, botTop, p.w + 8, 20);
+    }
+
+    function draw() {
+        // 天空
+        var g = ctx.createLinearGradient(0, 0, 0, H);
+        g.addColorStop(0, '#3d9be9');
+        g.addColorStop(0.7, '#8fd3f4');
+        g.addColorStop(1, '#cfeeff');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, W, H);
+
+        // 太阳（右上，带光晕）
+        var sunX = W - 70, sunY = 70;
+        var sg = ctx.createRadialGradient(sunX, sunY, 10, sunX, sunY, 60);
+        sg.addColorStop(0, 'rgba(255,236,140,.95)');
+        sg.addColorStop(0.5, 'rgba(255,214,90,.55)');
+        sg.addColorStop(1, 'rgba(255,214,90,0)');
+        ctx.fillStyle = sg;
+        ctx.beginPath();
+        ctx.arc(sunX, sunY, 60, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ffdf6b';
+        ctx.beginPath();
+        ctx.arc(sunX, sunY, 26, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 白云
+        for (var c = 0; c < clouds.length; c++) {
+            drawCloud(clouds[c].x, clouds[c].y, clouds[c].s);
+        }
+
+        // 障碍物：整根柱子，中间留缺口
+        for (var i = 0; i < pipes.length; i++) {
+            drawPipe(pipes[i]);
+        }
+
+        // 地面：草地 + 泥土
+        ctx.fillStyle = '#46c25f';
+        ctx.fillRect(0, groundY(), W, 12);
+        ctx.fillStyle = '#2f9e44';
+        ctx.fillRect(0, groundY(), W, 3);
+        ctx.fillStyle = '#a06a35';
+        ctx.fillRect(0, groundY() + 12, W, H - groundY() - 12);
+        ctx.fillStyle = 'rgba(0,0,0,.08)';
+        ctx.fillRect(0, groundY() + 24, W, 3);
+
+        drawBird();
+    }
+
+    var lastTime = null, accumulator = 0;
+    function loop(now) {
+        if (lastTime === null) lastTime = now;
+        accumulator += Math.min(100, Math.max(0, now - lastTime));
+        lastTime = now;
+        while (accumulator >= 1000 / 60) { update(); accumulator -= 1000 / 60; }
+        draw();
+        requestAnimationFrame(loop);
+    }
+
+    reset();
+    requestAnimationFrame(loop);
+</script>
+</body>
+</html>
