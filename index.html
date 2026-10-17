@@ -203,11 +203,14 @@
             return;
         }
 
-        if (frame - lastSpawn >= 100) { spawnPipe(); lastSpawn = frame; }
-
         // 基础速度随屏幕宽度自适应；每得 1 分加 1 倍速（1 分=2 倍，2 分=3 倍……）
         var baseSpeed = Math.max(1.6, W * 0.0022);
         var speed = baseSpeed * (1 + score);
+
+        // 出柱间隔随速度缩短，保证柱子之间的水平距离恒定（= 初始 100 帧 × 基础速度）
+        var spawnInterval = Math.max(8, Math.round(100 * baseSpeed / speed));
+        if (frame - lastSpawn >= spawnInterval) { spawnPipe(); lastSpawn = frame; }
+
         for (var i = 0; i < pipes.length; i++) {
             var p = pipes[i];
             p.x -= speed;
