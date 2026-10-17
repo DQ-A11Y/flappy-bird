@@ -205,7 +205,9 @@
 
         if (frame - lastSpawn >= 100) { spawnPipe(); lastSpawn = frame; }
 
-        var speed = Math.max(1.6, W * 0.0022);
+        // 基础速度随屏幕宽度自适应；得分越高速度越快，每分 +1%，最高 3 倍
+        var baseSpeed = Math.max(1.6, W * 0.0022);
+        var speed = baseSpeed * Math.min(3, 1 + score * 0.01);
         for (var i = 0; i < pipes.length; i++) {
             var p = pipes[i];
             p.x -= speed;
