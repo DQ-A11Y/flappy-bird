@@ -98,6 +98,7 @@
             bird.x = Math.max(50, W * 0.25);
             bird.y *= H / oldH;
             pipes.forEach(function(p) { p.x *= W / oldW; p.gapY *= H / oldH; p.gapH *= H / oldH; });
+            spawnDist *= W / oldW;
             if (started && !over) pauseGame();
         }
     }
@@ -109,7 +110,7 @@
     var FLAP = -7.5;
     var MAX_FALL = 4.2;
 
-    var bird, pipes, clouds, score, over, frame, lastSpawn;
+    var bird, pipes, clouds, score, over, spawnDist;
 
     function groundY() { return H - 40; }
 
@@ -133,8 +134,8 @@
         over = false;
         started = false; paused = false;
         document.getElementById('hint').textContent = '轻触屏幕开始 · 连续点击向上飞';
-        frame = 0;
-        lastSpawn = -60;
+        // 出柱进度（像素）：开局先走 60% 间距，第一根柱出现时机与原逻辑一致
+        spawnDist = 60 * Math.max(1.6, W * 0.0022);
         document.getElementById('overlay').style.display = 'none';
         updateScore();
     }
@@ -190,7 +191,6 @@
 
     function update() {
         if (over || !started || paused) return;
-        frame++;
 
         bird.vy += GRAVITY;
         if (bird.vy > MAX_FALL) bird.vy = MAX_FALL;
@@ -207,9 +207,11 @@
         var baseSpeed = Math.max(1.6, W * 0.0022);
         var speed = baseSpeed * (1 + score);
 
-        // 出柱间隔随速度缩短，保证柱子之间的水平距离恒定（= 初始 100 帧 × 基础速度）
-        var spawnInterval = Math.max(8, Math.round(100 * baseSpeed / speed));
-        if (frame - lastSpawn >= spawnInterval) { spawnPipe(); lastSpawn = frame; }
+        // 按距离出柱：每前进一个固定间距（100 × 基础速度）就出一根
+        // 与速度完全脱钩，整局游戏柱子间的水平距离严格不变
+        var pipeGap = 100 * baseSpeed;
+        spawnDist += speed;
+        while (spawnDist >= pipeGap) { spawnPipe(); spawnDist -= pipeGap; }
 
         for (var i = 0; i < pipes.length; i++) {
             var p = pipes[i];
